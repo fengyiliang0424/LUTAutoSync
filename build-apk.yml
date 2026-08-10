@@ -1,0 +1,85 @@
+name: Build APK
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-debug-apk:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out project
+        uses: actions/checkout@v4
+
+      - name: Locate Android project
+        shell: bash
+        run: |
+          if [[ -f "./gradlew" ]]; then
+            project_dir="."
+          elif [[ -f "./LUTAutoSync/gradlew" ]]; then
+            project_dir="./LUTAutoSync"
+          else
+            wrapper_path="$(find . -mindepth 2 -maxdepth 3 -type f -name gradlew -print -quit)"
+            if [[ -z "$wrapper_path" ]]; then
+              echo "ERROR: gradlew was not found in the repository root or a project subdirectory."
+              echo "Repository files:"
+              find . -maxdepth 3 -type f -print | sort
+              exit 1
+            fi
+            project_dir="$(dirname "$wrapper_path")"
+          fi
+
+          if [[ ! -f "$project_dir/settings.gradle.kts" && ! -f "$project_dir/settings.gradle" ]]; then
+            echo "ERROR: No Gradle settings file exists in $project_dir"
+            exit 1
+          fi
+          if [[ ! -f "$project_dir/app/build.gradle.kts" && ! -f "$project_dir/app/build.gradle" ]]; then
+            echo "ERROR: No app Gradle module exists in $project_dir"
+            exit 1
+          fi
+
+          echo "Android project found at: $project_dir"
+          echo "PROJECT_DIR=$project_dir" >> "$GITHUB_ENV"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle Wrapper executable
+        run: chmod +x "$PROJECT_DIR/gradlew"
+
+      - name: Build debug APK
+        run: |
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug --no-daemon --stacktrace --info
+
+      - name: Collect debug APK
+        run: |
+          mkdir -p artifacts
+          cp "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" artifacts/app-debug.apk
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LUTAutoSync-debug-apk
+          path: artifacts/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
